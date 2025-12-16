@@ -1,6 +1,12 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import {
+  Injectable,
+  Logger,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import axios, { AxiosError } from 'axios';
+import { firstValueFrom } from 'rxjs';
+import { AiAgentService } from './ai-agent.service';
 import {
   SendWhatsappMessageDto,
   WhatsappMessageType,
@@ -8,73 +14,75 @@ import {
 
 @Injectable()
 export class WhatsappService {
-  private token: string;
-  private phoneNumberId: string;
-  private apiUrl: string;
+  private readonly logger = new Logger(WhatsappService.name);
+  private readonly accessToken: string;
+  private readonly apiUrl: string;
 
   constructor(
-    private config: ConfigService,
-    private readonly logger: Logger,
+    private readonly httpService: HttpService,
+    private readonly aiAgentService: AiAgentService,
+    private readonly configService: ConfigService,
   ) {
-    this.token = this.config.get<string>('META_TOKEN')!;
-    this.phoneNumberId = this.config.get<string>('PHONE_NUMBER_ID')!;
-    this.apiUrl = this.config.get<string>('META_API_URL')!;
+    const accessToken = this.configService.get<string>('META_ACCESS_TOKEN');
+    const senderId = this.configService.get<string>('META_SENDER_ID');
+
+    if (!accessToken || !senderId) {
+      throw new Error(
+        'Missing required environment variables: META_ACCESS_TOKEN or META_SENDER_ID',
+      );
+    }
+
+    this.accessToken = accessToken;
+    const metaApiUrl = this.configService.get<string>('META_API_URL');
+    this.apiUrl = `${metaApiUrl}/${senderId}/messages`;
   }
 
-  async sendMessage(payload: SendWhatsappMessageDto) {
-    const url = `${this.apiUrl}/${this.phoneNumberId}/messages`;
-    const data: any = {
-      messaging_product: 'whatsapp',
-      to: payload.to,
-      type: payload.type,
+  async handleIncomingMessage(payload: any): Promise<void> {
+    // Extract user message and phone number from webhook payload
+    // This is a sample structure, you must adapt it to the actual Meta webhook payload
+    const message = payload.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
+    if (!message || message.type !== 'text') {
+      this.logger.warn('Received non-text message or invalid payload');
+      return;
+    }
+
+    const userPhoneNumber = message.from;
+    const userMessage = message.text.body;
+
+    this.logger.log(`Received message from ${userPhoneNumber}: ${userMessage}`);
+
+    // Get response from AI agent
+    const aiResponse = await this.aiAgentService.generateResponse(userMessage);
+
+    // Send the AI response back to the user
+    const responseDto: SendWhatsappMessageDto = {
+      to: userPhoneNumber,
+      type: WhatsappMessageType.TEXT,
+      text: { body: aiResponse },
     };
 
-    if (payload.type === WhatsappMessageType.TEXT && payload.text) {
-      data.text = payload.text;
-    } else if (
-      payload.type === WhatsappMessageType.TEMPLATE &&
-      payload.template
-    ) {
-      data.template = payload.template;
-    } else {
-      this.logger.error('Invalid message payload for type', payload);
-      throw new Error(
-        'Invalid message payload: type and corresponding data are required.',
-      );
-    }
-
-    try {
-      const response = await axios.post(url, data, {
-        headers: {
-          Authorization: `Bearer ${this.token}`,
-          'Content-Type': 'application/json',
-        },
-      });
-      return response.data;
-    } catch (error) {
-      const axiosError = error as AxiosError;
-      this.logger.error(
-        // Changed 'to' to 'payload.to' for consistency
-        `Error sending message to ${payload.to}: ${axiosError.message}`,
-        axiosError.stack,
-      );
-      throw new Error(`Failed to send message to ${payload.to}`);
-    }
+    await this.sendMessage(responseDto);
   }
 
-  async handleIncomingMessage(body: any): Promise<void> {
+  async sendMessage(dto: SendWhatsappMessageDto): Promise<void> {
+    const headers = { Authorization: `Bearer ${this.accessToken}` };
+    const body = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      ...dto,
+    };
     try {
-      const message = body.entry[0].changes[0].value.messages[0];
-      const from = message.from;
-      const msgBody = message.text.body;
-      await this.sendMessage({
-        // Updated call to sendMessage
-        to: from,
-        type: WhatsappMessageType.TEXT,
-        text: { body: msgBody },
-      });
+      await firstValueFrom(
+        this.httpService.post(this.apiUrl, body, { headers }),
+      );
+      this.logger.log(`Message sent successfully to ${dto.to}`);
     } catch (error) {
-      this.logger.error('Error handling incoming message', error.stack);
+      this.logger.error(`Failed to send message to ${dto.to}`, error.stack);
+      // Depending on your needs, you might want to throw an exception
+      // to let the caller know the message failed to send.
+      throw new InternalServerErrorException(
+        'Failed to send WhatsApp message.',
+      );
     }
   }
 }

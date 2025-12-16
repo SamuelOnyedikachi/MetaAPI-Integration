@@ -5,6 +5,7 @@ import {
   ValidateNested,
   IsOptional,
 } from 'class-validator';
+import { ValidateIf } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class WhatsappTextMessageDto {
@@ -49,11 +50,13 @@ export class SendWhatsappMessageDto {
 
   @IsOptional()
   @ValidateNested()
+  @ValidateIf(o => o.type === WhatsappMessageType.TEXT)
   @Type(() => WhatsappTextMessageDto)
   text?: WhatsappTextMessageDto;
 
   @IsOptional()
   @ValidateNested()
+  @ValidateIf(o => o.type === WhatsappMessageType.TEMPLATE)
   @Type(() => WhatsappTemplateMessageDto)
   template?: WhatsappTemplateMessageDto;
 }
