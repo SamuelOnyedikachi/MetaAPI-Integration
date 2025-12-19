@@ -22,11 +22,16 @@ export class AiAgentService {
       const text = response.text();
       return text.trim();
     } catch (error) {
-      console.error('Error generating AI response from Google:', error);
       // Handle potential safety blocks from the API
       if (error instanceof Error && error.message.includes('SAFETY')) {
+        console.warn(
+          'AI response blocked due to safety settings:',
+          error.message,
+        );
         return 'My safety settings prevented me from generating a response to that prompt.';
       }
+      // Log other types of errors
+      console.error('Error generating AI response from Google:', error);
       return 'Sorry, I am having trouble connecting to my brain right now.';
     }
   }

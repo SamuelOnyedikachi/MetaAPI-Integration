@@ -21,7 +21,13 @@ export class WhatsappController {
     private readonly whatsappService: WhatsappService,
     private readonly configService: ConfigService,
   ) {
-    this.verifyToken = this.configService.get<string>('META_VERIFY_TOKEN')!;
+    const token = this.configService.get<string>('META_VERIFY_TOKEN');
+    if (!token) {
+      throw new Error(
+        'Missing required environment variable: META_VERIFY_TOKEN',
+      );
+    }
+    this.verifyToken = token;
   }
 
   // Webhook verification endpoint
