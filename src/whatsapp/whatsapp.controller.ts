@@ -38,7 +38,16 @@ export class WhatsappController {
     @Query('hub.challenge') challenge: string,
   ): string {
     this.logger.log('Webhook verification request received.');
+
+    // Handle case where user visits the URL in a browser without parameters
+    if (!mode || !token) {
+      return 'Hello! This is the webhook verification endpoint. To verify, please configure this URL in the Meta Developer Dashboard.';
+    }
+
     if (mode !== 'subscribe' || token !== this.verifyToken) {
+      this.logger.warn(
+        `Webhook verification failed. Received Mode: ${mode}, Received Token: ${token}, Expected Token: ${this.verifyToken}`,
+      );
       throw new ForbiddenException('Webhook verification failed.');
     }
     this.logger.log('Webhook verified successfully!');
